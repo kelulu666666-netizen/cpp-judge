@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>管理后台 · C++ 在线判题</title>
+<style>
+:root{
+  --bg:#0f1320; --card:#1a2032; --accent:#4f8cff; --line:#2a3247;
+  --txt:#e8ecf4; --mut:#8b93a7; --ok:#2ecc71; --bad:#e74c3c; --warn:#e67e22;
+}
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+html,body{margin:0; padding:0;}
+body{
+  background:var(--bg); color:var(--txt);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+  font-size:14px; line-height:1.5; padding-bottom:env(safe-area-inset-bottom);
+}
+header{padding:14px 16px; background:rgba(15,19,32,.96); border-bottom:1px solid var(--line);
+  display:flex; justify-content:space-between; align-items:center; position:sticky; top:0; z-index:10;}
+header h1{font-size:17px; margin:0; font-weight:600;}
+.wrap{padding:12px;}
+.card{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px;}
+.card h2{font-size:14px; margin:0 0 10px; color:var(--mut); font-weight:600;}
+.stats{display:grid; grid-template-columns:repeat(2,1fr); gap:10px;}
+.stat{background:#121726; border:1px solid var(--line); border-radius:10px; padding:12px; text-align:center;}
+.stat .num{font-size:22px; font-weight:700; color:#fff;}
+.stat .lbl{font-size:12px; color:var(--mut); margin-top:2px;}
+.membar{height:14px; background:#0c0f1a; border-radius:999px; overflow:hidden; border:1px solid var(--line);}
+.membar > i{display:block; height:100%; background:linear-gradient(90deg,#4f8cff,#2ecc71);}
+.memtxt{display:flex; justify-content:space-between; font-size:12px; color:var(--mut); margin-top:6px;}
+.btn{display:block; width:100%; margin-top:10px; padding:13px; border:0; border-radius:12px;
+  background:var(--accent); color:#fff; font-size:15px; font-weight:700;}
+.btn:active{opacity:.85;}
+.btn.ghost{background:var(--card); color:var(--txt); border:1px solid var(--line); font-weight:600;}
+.btn.sm{padding:8px 12px; font-size:13px; width:auto; display:inline-block; margin:0;}
+.btn.danger{background:var(--bad);}
+table{width:100%; border-collapse:collapse; font-size:12.5px;}
+th,td{text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:top; word-break:break-all;}
+th{color:var(--mut); font-weight:600;}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11.5px;}
+.badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; color:#fff;}
+.badge.b0{background:var(--ok);} .badge.b1{background:var(--bad);}
+.rowbtn{display:flex; gap:6px; flex-wrap:wrap;}
+.loginbox{max-width:340px; margin:18vh auto 0;}
+.loginbox input{width:100%; background:#0c0f1a; color:var(--txt); border:1px solid var(--line);
+  border-radius:10px; padding:13px; font-size:18px; text-align:center; margin-bottom:12px;}
+.err{color:var(--bad); font-size:13px; min-height:16px; margin-bottom:8px; text-align:center;}
+.empty{color:var(--mut); text-align:center; padding:16px 0; font-size:13px;}
+.hidden{display:none !important;}
+.copyright{text-align:center; color:var(--mut); font-size:12px; padding:16px;
+  border-top:1px solid var(--line); margin-top:12px;}
+</style>
+</head>
+<body>
+
+<!-- 登录 -->
+<div id="loginView" class="wrap loginbox hidden">
+  <div class="card">
+    <h2 style="text-align:center;">🔐 管理后台登录</h2>
+    <input id="apw" type="password" placeholder="管理员密码" autocomplete="off"
+           autocapitalize="off" autocorrect="off" spellcheck="false">
+    <div id="apwErr" class="err"></div>
+    <div id="netErr" class="err hidden"></div>
+    <button class="btn" id="loginBtn">登录</button>
+  </div>
+  <div class="small" style="color:var(--mut); text-align:center; margin-top:10px; font-size:12px;">
+    默认密码 admin888（可用环境变量 ADMIN_PASSWORD 修改）
+  </div>
+</div>
+
+<!-- 后台主界面 -->
+<div id="dashView" class="hidden">
+  <header>
+    <h1>🛠 管理后台</h1>
+    <div>
+      <button class="btn sm ghost" id="refreshBtn">刷新</button>
+      <button class="btn sm danger" id="logoutBtn">登出</button>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <div class="card">
+      <h2>🖥 服务器内存
+        <button class="btn sm ghost" id="cleanBtn" style="float:right;margin-top:-2px;">🧹 清理内存</button>
+      </h2>
+      <div class="membar"><i id="memFill" style="width:0%"></i></div>
+      <div class="memtxt">
+        <span id="memUsed">—</span>
+        <span id="memTotal">—</span>
+      </div>
+      <div class="memtxt">
+        <span id="memAvail">—</span>
+        <span id="memPct">—</span>
+      </div>
+      <div id="cleanMsg" class="err hidden" style="color:var(--ok);"></div>
+      <div id="memTop" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="card">
+      <h2>📊 概览</h2>
+      <div class="stats">
+        <div class="stat"><div class="num" id="stDevices">0</div><div class="lbl">设备总数</div></div>
+        <div class="stat"><div class="num" id="stBanned" style="color:var(--bad)">0</div><div class="lbl">已禁用</div></div>
+        <div class="stat"><div class="num" id="stToday">0</div><div class="lbl">今日登录</div></div>
+        <div class="stat"><div class="num" id="stLogins">0</div><div class="lbl">累计登录</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>📱 设备列表（点击可禁用 / 删除）</h2>
+      <div id="devBody"></div>
+    </div>
+
+    <div class="card">
+      <h2>📝 登录记录（可逐条删除）</h2>
+      <div id="logBody"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let TOKEN = '';
+try { TOKEN = localStorage.getItem('admin_token') || ''; } catch(e) { TOKEN = ''; }
+
+// 请求基址：优先当前域名；若页面被嵌在内置浏览器/预览中导致请求失败，自动回退到部署域名
+const DEPLOY_ORIGIN = 'https://a406b3603a6c33bb1.app.workbuddy.host';
+const BASES = [];
+if (location.protocol.startsWith('http')) BASES.push(location.origin);
+if (!BASES.includes(DEPLOY_ORIGIN)) BASES.push(DEPLOY_ORIGIN);
+
+function shortId(id){ return id ? id.slice(0,8) : '—'; }
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmtMB(mb){ const gb = mb/1024; return gb >= 1 ? gb.toFixed(2)+' GB' : (mb+' MB'); }
+
+// 依次尝试多个基址的请求
+async function fetchAny(method, path, body){
+  let lastErr = null;
+  for (const base of BASES){
+    try{
+      const opt = {method, headers:{'Content-Type':'application/json'}};
+      if (body !== undefined) opt.body = JSON.stringify(body);
+      if (TOKEN) opt.headers['x-admin-token'] = TOKEN;
+      return await fetch(base + path, opt);
+    }catch(e){ lastErr = e; }
+  }
+  throw lastErr || new Error('网络错误');
+}
+
+async function api(path, method='GET', body){
+  const r = await fetchAny(method, path, body);
+  if (r.status === 401){ // 登录失效
+    TOKEN=''; try{ localStorage.removeItem('admin_token'); }catch(e){}
+    showLogin(); throw new Error('登录失效');
+  }
+  return r.json();
+}
+
+function showLogin(){ $('#loginView').classList.remove('hidden'); $('#dashView').classList.add('hidden'); }
+function showDash(){ $('#loginView').classList.add('hidden'); $('#dashView').classList.remove('hidden'); }
+function netErr(msg){
+  const el = $('#netErr');
+  el.textContent = msg; el.classList.remove('hidden');
+  setTimeout(()=>{ el.classList.add('hidden'); }, 6000);
+}
+
+// 登录
+$('#loginBtn').onclick = async () => {
+  const pw = $('#apw').value.trim();
+  try{
+    const r = await fetchAny('POST', '/admin/login', {password: pw});
+    if(!r.ok){
+      let msg = '管理员密码错误';
+      if(r.status !== 401) msg = '网络错误，请重试';
+      $('#apwErr').textContent = msg;
+      return;
+    }
+    const d = await r.json();
+    TOKEN = d.token; try{ localStorage.setItem('admin_token', TOKEN); }catch(e){}
+    $('#apwErr').textContent=''; showDash(); load();
+  }catch(e){ $('#apwErr').textContent='网络错误，请重试（建议用 Safari 打开本页）'; }
+};
+$('#apw').addEventListener('keydown', e=>{ if(e.key==='Enter') $('#loginBtn').click(); });
+$('#logoutBtn').onclick = () => { TOKEN=''; try{ localStorage.removeItem('admin_token'); }catch(e){} showLogin(); };
+$('#refreshBtn').onclick = load;
+$('#cleanBtn').onclick = async () => {
+  const btn = $('#cleanBtn'); btn.disabled = true; btn.textContent = '清理中…';
+  $('#cleanMsg').classList.add('hidden');
+  try{
+    const d = await api('/api/admin/memory/clean', 'POST');
+    const b = d.before, a = d.after;
+    const freed = Math.max(b.used_mb - a.used_mb, 0);
+    $('#cleanMsg').textContent = `✅ 已清理：占用 ${b.used_mb}MB → ${a.used_mb}MB（释放约 ${freed}MB）`;
+    $('#cleanMsg').classList.remove('hidden');
+    load();
+  }catch(e){ $('#cleanMsg').textContent = '清理失败，请重试'; $('#cleanMsg').classList.remove('hidden'); }
+  btn.disabled = false; btn.textContent = '🧹 清理内存';
+};
+
+function renderTop(top){
+  const el = $('#memTop');
+  if(!top || !top.length){ el.innerHTML = '<div class="empty">暂无进程占用数据</div>'; return; }
+  let html = '<div style="font-size:12px;color:var(--mut);margin:2px 0 4px;">具体占用（内存 Top 进程）</div>'
+           + '<table><thead><tr><th>进程</th><th style="text-align:right;">RSS</th></tr></thead><tbody>';
+  for(const p of top){
+    html += `<tr><td>${esc(p.cmd)}</td><td class="mono" style="text-align:right;">${fmtMB(p.rss_mb)}</td></tr>`;
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+async function load(){
+  try{
+    const s = await api('/api/admin/stats');
+    showDash(); // 请求成功才显示主界面
+    const m = s.memory;
+    $('#memFill').style.width = m.percent + '%';
+    $('#memUsed').textContent = `已用 ${fmtMB(m.used_mb)}`;
+    $('#memTotal').textContent = `共 ${fmtMB(m.total_mb)}`;
+    $('#memAvail').textContent = `可用 ${fmtMB(m.avail_mb)}`;
+    $('#memPct').textContent = `占用 ${m.percent}%`;
+    $('#memPct').style.color = m.percent >= 85 ? 'var(--bad)' : (m.percent >= 60 ? 'var(--warn)' : 'var(--mut)');
+    renderTop(s.top);
+    $('#stDevices').textContent = s.devices;
+    $('#stBanned').textContent = s.banned;
+    $('#stToday').textContent = s.logins_today;
+    $('#stLogins').textContent = s.total_logins;
+
+    const d = await api('/api/admin/devices');
+    renderDevices(d.devices);
+    renderLogs(d.logs);
+  }catch(e){
+    if (e && e.message === '登录失效') return; // 401 已跳登录
+    // 网络不通：退回登录页并提示，绝不停留在空白页
+    showLogin();
+    $('#apwErr').textContent = '无法连接服务器，请检查网络或用 Safari 打开';
+  }
+}
+
+function renderDevices(devices){
+  const body = $('#devBody');
+  if(!devices.length){ body.innerHTML = '<div class="empty">暂无设备记录</div>'; return; }
+  let html = '<table><thead><tr><th>设备</th><th>UA / IP</th><th>最近</th><th>状态</th><th>操作</th></tr></thead><tbody>';
+  for(const dv of devices){
+    const b = dv.banned ? 1 : 0;
+    html += `<tr>
+      <td class="mono">${esc(shortId(dv.device_id))}</td>
+      <td>${esc((dv.ua||'').slice(0,40))}<br><span class="mono">${esc(dv.ip||'')}</span> · ${esc(dv.screen||'')}</td>
+      <td>${esc((dv.last_seen||'').replace('T',' '))}</td>
+      <td><span class="badge b${b}">${b?'已禁用':'正常'}</span></td>
+      <td><div class="rowbtn">
+        <button class="btn sm ${b?'ghost':'danger'}" data-ban="${b?0:1}" data-id="${esc(dv.device_id)}">${b?'解禁':'禁用'}</button>
+        <button class="btn sm ghost" data-deldev="1" data-id="${esc(dv.device_id)}">删除</button>
+      </div></td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  body.innerHTML = html;
+  body.querySelectorAll('[data-ban]').forEach(btn=>btn.onclick=async()=>{
+    await api('/api/admin/device/ban','POST',{device_id:btn.dataset.id,banned:btn.dataset.ban==='1'});
+    load();
+  });
+  body.querySelectorAll('[data-deldev]').forEach(btn=>btn.onclick=async()=>{
+    if(!confirm('确认删除该设备及它的全部登录记录？')) return;
+    await api('/api/admin/device/delete','POST',{device_id:btn.dataset.id});
+    load();
+  });
+}
+
+function renderLogs(logs){
+  const body = $('#logBody');
+  if(!logs.length){ body.innerHTML = '<div class="empty">暂无登录记录</div>'; return; }
+  let html = '<table><thead><tr><th>时间</th><th>设备</th><th>IP</th><th>操作</th></tr></thead><tbody>';
+  for(const lg of logs){
+    html += `<tr>
+      <td class="mono">${esc((lg.ts||'').replace('T',' '))}</td>
+      <td class="mono">${esc(shortId(lg.device_id))}</td>
+      <td class="mono">${esc(lg.ip||'')}</td>
+      <td><button class="btn sm ghost" data-dellog="1" data-id="${lg.id}">删除</button></td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  body.innerHTML = html;
+  body.querySelectorAll('[data-dellog]').forEach(btn=>btn.onclick=async()=>{
+    await api('/api/admin/log/delete','POST',{log_id:Number(btn.dataset.id)});
+    load();
+  });
+}
+
+// 启动：有 token 先尝试加载，失败（网络/过期）回登录；无 token 直接登录
+if (TOKEN){ load(); } else { showLogin(); }
+</script>
+<footer class="copyright">© Asuna(fcz)</footer>
+</body>
+</html>

@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>C++ 在线判题 · 手机版</title>
+<style>
+:root{
+  --bg:#0f1320; --card:#1a2032; --accent:#4f8cff; --line:#2a3247;
+  --txt:#e8ecf4; --mut:#8b93a7; --ok:#2ecc71; --bad:#e74c3c; --warn:#e67e22;
+}
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+html,body{margin:0; padding:0;}
+body{
+  background:var(--bg); color:var(--txt);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+  font-size:15px; line-height:1.5; padding-bottom:env(safe-area-inset-bottom);
+}
+header{
+  padding:14px 16px; position:sticky; top:0; z-index:10;
+  background:rgba(15,19,32,.96); backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--line);
+}
+header h1{font-size:17px; margin:0; font-weight:600;}
+header p{margin:2px 0 0; color:var(--mut); font-size:12px;}
+.tabs{display:flex; gap:8px; padding:10px 12px 0;}
+.tab{
+  flex:1; text-align:center; padding:11px; border:1px solid var(--line);
+  border-radius:10px; background:var(--card); color:var(--mut); font-weight:600; font-size:14px;
+}
+.tab.active{color:#fff; background:var(--accent); border-color:var(--accent);}
+.wrap{padding:12px;}
+label{display:block; color:var(--mut); font-size:13px; margin:12px 2px 5px;}
+textarea,input,select{
+  width:100%; background:#0c0f1a; color:var(--txt); border:1px solid var(--line);
+  border-radius:10px; padding:11px; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:16px;
+}
+#stdin{line-height:1.5;}
+.btn{
+  display:block; width:100%; margin-top:14px; padding:15px; border:0; border-radius:12px;
+  background:var(--accent); color:#fff; font-size:16px; font-weight:700;
+}
+.btn:active{opacity:.85;}
+.btn.ghost{background:var(--card); color:var(--txt); border:1px solid var(--line); font-weight:600;}
+.result{margin-top:14px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; display:none;}
+.badge{display:inline-block; padding:5px 14px; border-radius:999px; font-weight:700; font-size:14px; color:#fff;}
+.badge.AC{background:var(--ok);}
+.badge.WA{background:var(--warn);}
+.badge.CE,.badge.RE,.badge.TLE,.badge.MLE{background:var(--bad);}
+.meta{color:var(--mut); font-size:12px; margin:8px 0 4px;}
+pre{
+  white-space:pre-wrap; word-break:break-word; background:#0c0f1a; border:1px solid var(--line);
+  border-radius:8px; padding:10px; margin:6px 0 0; font-size:13px; max-height:260px; overflow:auto;
+}
+.hint{
+  white-space:pre-wrap; word-break:break-word; background:rgba(79,140,255,.12);
+  border:1px solid rgba(79,140,255,.45); border-radius:8px; padding:10px; margin-top:10px;
+  font-size:13px; line-height:1.65; color:#cfe0ff;
+}
+.case{border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:10px; background:#121726;}
+.case .hd{display:flex; justify-content:space-between; align-items:center; color:var(--mut); font-size:12px; margin-bottom:6px;}
+.case .del{color:var(--bad); border:0; background:none; font-size:13px; padding:4px;}
+.case .badge{font-size:12px; padding:3px 10px;}
+.small{font-size:12px; color:var(--mut);}
+.copyright{text-align:center; color:var(--mut); font-size:12px; padding:16px;
+  border-top:1px solid var(--line); margin-top:12px;}
+
+/* 代码编辑器：textarea 透明文字 + 背后高亮层，实现出错行变色 */
+.editor{position:relative; min-height:240px;}
+.editor > pre, .editor > textarea{
+  margin:0; border:1px solid var(--line); border-radius:10px; padding:11px;
+  width:100%; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:16px; line-height:1.5; letter-spacing:0; tab-size:4;
+  white-space:pre-wrap; word-break:break-word; overflow-wrap:break-word;
+  box-sizing:border-box;
+}
+.editor > pre{
+  position:absolute; inset:0; background:#0c0f1a; color:var(--txt);
+  overflow:hidden; pointer-events:none; z-index:1; min-height:240px;
+}
+.editor > textarea{
+  position:relative; z-index:2; background:transparent; color:transparent;
+  caret-color:#fff; resize:vertical; min-height:240px; overflow:auto; scrollbar-width:none;
+}
+.editor > textarea::-webkit-scrollbar{display:none;}
+.editor > textarea::placeholder{color:#6b7280;}
+.editor .ln{min-height:1.5em;}
+.editor .ln.err{background:rgba(231,76,60,.32); color:#ffb1a8; border-radius:3px;}
+
+/* 密码门 */
+#gate{
+  position:fixed; inset:0; z-index:100; background:rgba(8,11,20,.97);
+  display:flex; align-items:center; justify-content:center; padding:24px;
+}
+.gatebox{width:100%; max-width:340px; background:var(--card); border:1px solid var(--line);
+  border-radius:14px; padding:22px; text-align:center;}
+.gatebox h2{margin:0 0 6px; font-size:18px;}
+.gatebox p{color:var(--mut); font-size:13px; margin:0 0 16px;}
+.gatebox input{width:100%; background:#0c0f1a; color:var(--txt); border:1px solid var(--line);
+  border-radius:10px; padding:13px; font-size:20px; text-align:center; letter-spacing:6px; margin-bottom:12px;}
+.gatebox button{width:100%; padding:14px; border:0; border-radius:12px; background:var(--accent);
+  color:#fff; font-size:16px; font-weight:700;}
+.gatebox button:active{opacity:.85;}
+</style>
+</head>
+<body>
+
+<!-- 密码门 -->
+<div id="gate">
+  <div class="gatebox">
+    <h2>🔒 输入访问密码</h2>
+    <p>本工具需要密码才能使用</p>
+    <input id="pw" type="password" inputmode="numeric" placeholder="请输入密码" autocomplete="off">
+    <button id="pwBtn">进入</button>
+    <div id="pwErr" class="small" style="color:var(--bad);margin-top:10px;min-height:14px;"></div>
+  </div>
+</div>
+
+<header>
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <h1>⚡ C++ 在线判题</h1>
+    <a href="/admin" target="_blank" style="color:var(--accent);font-size:13px;text-decoration:none;font-weight:600;">管理后台 ⮕</a>
+  </div>
+  <p>手机浏览器直接运行 C++，自动判断 编译/运行/超时/内存/答案对错</p>
+</header>
+
+<div class="tabs">
+  <div class="tab active" data-tab="run">▶ 运行</div>
+  <div class="tab" data-tab="test">✓ 测试用例</div>
+</div>
+
+<!-- 运行面板 -->
+<div class="wrap" id="pane-run">
+  <label>示例题目</label>
+  <select id="sample">
+    <option value="">— 选择示例快速体验 —</option>
+  </select>
+  <label>源代码（C++，<span style="color:var(--bad)">红色高亮</span>为出错行）</label>
+  <div class="editor">
+    <pre id="codeHL" aria-hidden="true"></pre>
+    <textarea id="code" spellcheck="false"></textarea>
+  </div>
+  <label>标准输入 stdin</label>
+  <textarea id="stdin" spellcheck="false" placeholder="程序运行时读取的输入，例如：1 2"></textarea>
+  <button class="btn" id="runBtn">▶ 运行代码</button>
+  <div class="result" id="runResult"></div>
+</div>
+
+<!-- 测试用例面板 -->
+<div class="wrap" id="pane-test" style="display:none">
+  <label>源代码（C++，<span style="color:var(--bad)">红色高亮</span>为出错行）</label>
+  <div class="editor">
+    <pre id="code2HL" aria-hidden="true"></pre>
+    <textarea id="code2" spellcheck="false"></textarea>
+  </div>
+  <label>测试用例（输入 + 期望输出，逐组评测）</label>
+  <div id="cases"></div>
+  <button class="btn ghost" id="addCase">+ 添加一组用例</button>
+  <button class="btn" id="judgeBtn">✓ 开始评测</button>
+  <div class="result" id="judgeResult"></div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const PW = '102938';
+let PASSWORD = '';
+
+const STATUS_TEXT = {AC:"通过",WA:"答案错误",CE:"编译错误",RE:"运行错误",TLE:"超时",MLE:"内存超限"};
+
+// 示例题库
+const SAMPLES = {
+  ab: {
+    name:"A+B 求和",
+    code:'#include <iostream>\nusing namespace std;\nint main() {\n    int a, b;\n    cin >> a >> b;\n    cout << a + b << endl;\n    return 0;\n}',
+    stdin:"1 2",
+    cases:[{input:"1 2",expected:"3"},{input:"-5 8",expected:"3"},{input:"100 200",expected:"300"}]
+  },
+  hello: {
+    name:"输出 Hello, World!",
+    code:'#include <iostream>\nusing namespace std;\nint main() {\n    cout << "Hello, World!" << endl;\n    return 0;\n}',
+    stdin:"",
+    cases:[{input:"",expected:"Hello, World!"}]
+  },
+  ce: {
+    name:"漏写 using namespace std（演示编译错误+提示）",
+    code:'#include <iostream>\nint main() {\n    int a, b;\n    cin >> a >> b;\n    cout << a + b << endl;\n    return 0;\n}',
+    stdin:"1 2",
+    cases:[{input:"1 2",expected:"3"}]
+  },
+  tle: {
+    name:"死循环（演示超时）",
+    code:'#include <iostream>\nusing namespace std;\nint main() {\n    while (true) {}\n    return 0;\n}',
+    stdin:"",
+    cases:[{input:"",expected:""}]
+  },
+  re: {
+    name:"空指针（演示运行错误）",
+    code:'#include <iostream>\nusing namespace std;\nint main() {\n    int* p = nullptr;\n    cout << *p << endl;\n    return 0;\n}',
+    stdin:"",
+    cases:[{input:"",expected:""}]
+  },
+  mle: {
+    name:"分配超大内存（演示内存超限）",
+    code:'#include <iostream>\n#include <vector>\nusing namespace std;\nint main() {\n    vector<int> v(80000000); // 约 320MB，超过 256MB 内存上限\n    for (size_t i = 0; i < v.size(); i++) v[i] = (int)i;\n    cout << v[0] << " " << v.back() << endl;\n    return 0;\n}',
+    stdin:"",
+    cases:[{input:"",expected:""}]
+  }
+};
+
+function escapeHtml(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+// ---- 代码高亮层 ----
+function renderHL(textareaId, preId, errSet){
+  const ta = document.getElementById(textareaId);
+  const pre = document.getElementById(preId);
+  const lines = ta.value.split('\n');
+  pre.innerHTML = lines.map((ln,i)=>{
+    const cls = errSet.has(i+1) ? 'ln err' : 'ln';
+    return `<div class="${cls}">${escapeHtml(ln)}</div>`;
+  }).join('');
+  pre.scrollTop = ta.scrollTop;
+}
+function wireEditor(textareaId, preId, errSet){
+  const ta = document.getElementById(textareaId);
+  ta.addEventListener('input', ()=>{ errSet.clear(); renderHL(textareaId, preId, errSet); });
+  ta.addEventListener('scroll', ()=>{ document.getElementById(preId).scrollTop = ta.scrollTop; });
+  renderHL(textareaId, preId, errSet);
+}
+const errRun = new Set();
+const errTest = new Set();
+
+// 填充示例下拉
+const sel = $('#sample');
+for (const k in SAMPLES){
+  const o = document.createElement('option');
+  o.value = k; o.textContent = SAMPLES[k].name; sel.appendChild(o);
+}
+sel.onchange = () => {
+  const s = SAMPLES[sel.value];
+  if (!s) return;
+  $('#code').value = s.code; $('#stdin').value = s.stdin;
+  $('#code2').value = s.code;
+  errRun.clear(); errTest.clear();
+  renderHL('code','codeHL',errRun); renderHL('code2','code2HL',errTest);
+  $('#cases').innerHTML = '';
+  s.cases.forEach(c => addCase(c.input, c.expected));
+};
+
+// Tab 切换
+document.querySelectorAll('.tab').forEach(t => {
+  t.onclick = () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    const tab = t.dataset.tab;
+    $('#pane-run').style.display = tab === 'run' ? '' : 'none';
+    $('#pane-test').style.display = tab === 'test' ? '' : 'none';
+  };
+});
+
+// 测试用例 dom
+function addCase(input='', expected=''){
+  const div = document.createElement('div');
+  div.className = 'case';
+  div.innerHTML = `
+    <div class="hd"><span>用例</span><button class="del">删除</button></div>
+    <textarea class="cinput" rows="2" placeholder="输入">${escapeHtml(input)}</textarea>
+    <textarea class="cexp" rows="2" placeholder="期望输出">${escapeHtml(expected)}</textarea>`;
+  div.querySelector('.del').onclick = () => div.remove();
+  $('#cases').appendChild(div);
+}
+$('#addCase').onclick = () => addCase();
+
+function fmtMem(m){return m==null?'—':(m<1?Math.round(m*1024)+' KB':m.toFixed(1)+' MB');}
+function hintBox(h){ return h ? `<div class="hint">💡 ${escapeHtml(h)}</div>` : ''; }
+
+function fmtRes(r){
+  const st = r.status;
+  let html = `<span class="badge ${st}">${st} · ${STATUS_TEXT[st]||st}</span>`;
+  html += `<div class="meta">耗时 ${r.time!=null?r.time:'—'} s ｜ 内存 ${fmtMem(r.memory)}</div>`;
+  if (r.stdout) html += `<div class="meta">标准输出：</div><pre>${escapeHtml(r.stdout)}</pre>`;
+  if (r.stderr) html += `<div class="meta">错误/编译信息：</div><pre>${escapeHtml(r.stderr)}</pre>`;
+  if (r.status==='WA'){
+    html += `<div class="meta">你的输出：</div><pre>${escapeHtml(r.stdout)}</pre>`;
+    html += `<div class="meta">期望输出：</div><pre>${escapeHtml(r.expected||'')}</pre>`;
+  }
+  html += hintBox(r.hint);
+  return html;
+}
+
+// 带密码的请求（携带设备 id，供后台记录与禁用判定）
+async function callApi(url, body){
+  const r = await fetch(url, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', 'x-password':PASSWORD, 'x-device-id':DEVICE_ID},
+    body: JSON.stringify(body)
+  });
+  if (r.status === 403) throw new Error('该设备已被管理员禁用，无法运行。');
+  if (r.status === 401) throw new Error('密码错误，请刷新页面重新输入密码');
+  return r.json();
+}
+
+// 运行
+$('#runBtn').onclick = async () => {
+  const btn = $('#runBtn');
+  btn.disabled = true; btn.textContent = '运行中…';
+  $('#runResult').style.display = 'block';
+  $('#runResult').innerHTML = '<div class="meta">编译并运行中，请稍候…</div>';
+  try {
+    const d = await callApi('/api/run', {code:$('#code').value, stdin:$('#stdin').value});
+    $('#runResult').innerHTML = fmtRes(d);
+    errRun.clear();
+    (d.error_lines||[]).forEach(n=>errRun.add(n));
+    renderHL('code','codeHL',errRun);
+  } catch(e) {
+    $('#runResult').innerHTML = `<span class="badge CE">请求失败</span><pre>${escapeHtml(String(e))}</pre>`;
+  }
+  btn.disabled = false; btn.textContent = '▶ 运行代码';
+};
+
+// 评测
+$('#judgeBtn').onclick = async () => {
+  const btn = $('#judgeBtn');
+  const cases = [...document.querySelectorAll('#cases .case')].map(c => ({
+    input: c.querySelector('.cinput').value,
+    expected: c.querySelector('.cexp').value
+  }));
+  if (!cases.length){ alert('请至少添加一组测试用例'); return; }
+  btn.disabled = true; btn.textContent = '评测中…';
+  $('#judgeResult').style.display = 'block';
+  $('#judgeResult').innerHTML = '<div class="meta">逐组编译并评测中，请稍候…</div>';
+  try {
+    const d = await callApi('/api/judge', {code:$('#code2').value, cases});
+    let html = `<div class="meta">评测结果：通过 <b style="color:var(--ok)">${d.summary.passed}</b> / ${d.summary.total} 组</div>`;
+    d.results.forEach((res, i) => {
+      html += `<div class="case"><div class="hd"><span>第 ${i+1} 组</span><span class="badge ${res.status}">${res.status} · ${STATUS_TEXT[res.status]||res.status}</span></div>`;
+      html += `<div class="meta">耗时 ${res.time!=null?res.time:'—'} s ｜ 内存 ${fmtMem(res.memory)}</div>`;
+      if (res.stdout) html += `<pre>${escapeHtml(res.stdout)}</pre>`;
+      if (res.stderr) html += `<pre>${escapeHtml(res.stderr)}</pre>`;
+      if (res.status==='WA') html += `<div class="meta">期望：</div><pre>${escapeHtml(res.expected||'')}</pre>`;
+      html += hintBox(res.hint);
+      html += `</div>`;
+    });
+    $('#judgeResult').innerHTML = html;
+    errTest.clear();
+    d.results.forEach(r => (r.error_lines||[]).forEach(n=>errTest.add(n)));
+    renderHL('code2','code2HL',errTest);
+  } catch(e) {
+    $('#judgeResult').innerHTML = `<span class="badge CE">请求失败</span><pre>${escapeHtml(String(e))}</pre>`;
+  }
+  btn.disabled = false; btn.textContent = '✓ 开始评测';
+};
+
+// 设备指纹：持久化到 localStorage，用于后台记录与禁用
+function getDeviceId(){
+  let id = localStorage.getItem('judge_device_id');
+  if(!id){
+    id = (crypto.randomUUID ? crypto.randomUUID()
+         : 'd' + Date.now() + Math.random().toString(16).slice(2));
+    localStorage.setItem('judge_device_id', id);
+  }
+  return id;
+}
+const DEVICE_ID = getDeviceId();
+function deviceInfo(){
+  return {
+    device_id: DEVICE_ID,
+    ua: navigator.userAgent || '',
+    screen: (screen.width + 'x' + screen.height + (window.devicePixelRatio ? ('@' + window.devicePixelRatio) : '')),
+    lang: navigator.language || '',
+    platform: navigator.platform || '',
+    tz: (Intl.DateTimeFormat().resolvedOptions().timeZone || '')
+  };
+}
+// 解锁后向后台上报本次登录（被禁用则返回 false）
+async function registerDevice(){
+  try{
+    const r = await fetch('/api/device/register', {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'x-password':PASSWORD},
+      body: JSON.stringify(deviceInfo())
+    });
+    if (r.status === 403){ showBanned(); return false; }
+    return true;
+  }catch(e){ return true; } // 上报失败不阻断使用
+}
+function showBanned(){
+  document.getElementById('gate').innerHTML =
+    '<div class="gatebox"><h2>⛔ 设备已禁用</h2>'
+    + '<p>该设备已被管理员禁用，无法使用本工具。</p></div>';
+}
+
+// 密码门
+async function unlock(){
+  PASSWORD = PW;
+  const ok = await registerDevice();
+  if (!ok) return; // 被禁用，已显示拦截
+  $('#gate').style.display = 'none';
+}
+$('#pwBtn').onclick = async () => {
+  if ($('#pw').value !== PW){ $('#pwErr').textContent = '密码错误，请重试'; return; }
+  $('#pwBtn').disabled = true; $('#pwBtn').textContent = '进入中…';
+  await unlock();
+};
+$('#pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('#pwBtn').click(); });
+
+// 初始化
+wireEditor('code','codeHL',errRun);
+wireEditor('code2','code2HL',errTest);
+sel.value = 'ab'; sel.onchange();
+</script>
+<footer class="copyright">© Asuna(fcz)</footer>
+</body>
+</html>
