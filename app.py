@@ -10,6 +10,9 @@ import re
 import ctypes
 import time
 import json
+import hmac
+import hashlib
+import secrets
 import sqlite3
 import uuid
 import socket
@@ -19,8 +22,9 @@ import shutil
 import tempfile
 import subprocess
 import resource
+import requests
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -30,8 +34,17 @@ app = FastAPI()
 
 # 访问密码：打开页面需输入；同时作为接口调用凭证（header: x-password）
 ACCESS_PASSWORD = os.environ.get("JUDGE_PASSWORD", "102938")
-# 管理后台密码：用于 /admin 后台登录（可通过环境变量 ADMIN_PASSWORD 修改）
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin888")
+# 管理后台密码：用于 /admin 后台登录（可通过环境变量 ADMIN_PASSWORD 覆盖，默认 fcz666）。
+# 注意：密码以「加盐哈希」形式保存在内存中，不保留明文，登录时用恒定时间比较防时序攻击。
+_PLAIN_ADMIN = os.environ.get("ADMIN_PASSWORD", "fcz666")
+_ADMIN_SALT = secrets.token_bytes(16)
+ADMIN_PASSWORD_HASH = hashlib.pbkdf2_hmac(
+    "sha256", _PLAIN_ADMIN.encode("utf-8"), _ADMIN_SALT, 150000)
+# 用完后丢弃明文引用，降低泄露风险
+del _PLAIN_ADMIN
+# 参观密码：仅可「查看」后台，不能进行任何写操作（禁用/删除/清理等）。
+# 用于演示或只读巡查；可通过环境变量 TOUR_PASSWORD 修改。
+TOUR_PASSWORD = os.environ.get("TOUR_PASSWORD", "666")
 # 设备/登录记录数据库
 DB_PATH = os.environ.get("JUDGE_DB", str(Path(__file__).with_name("judge.db")))
 
@@ -48,6 +61,14 @@ MAX_CODE = 200 * 1024     # 代码大小上限
 MAX_INPUT = 1024 * 1024   # 输入大小上限
 
 NOBODY_UID = 65534
+
+# ---- 大模型（LLM）配置：OpenAI 兼容接口，用于判题出错时生成中文解释 ----
+# API Key 通过环境变量 LLM_API_KEY 提供（不写死在代码里）。
+# 默认按 DeepSeek 配置；如需其它兼容端点，改 LLM_BASE_URL / LLM_MODEL 即可。
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.deepseek.com").rstrip("/")
+LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek-chat")
+LLM_TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "15"))
 NOBODY_GID = 65534
 
 
@@ -204,6 +225,54 @@ def explain_status(status: str, stderr: str = ""):
                 "(2) 输出格式：是否多了/少了空格或换行；(3) 边界情况：n=0、负数、数据最大值；"
                 "(4) 浮点精度（必要时用 `printf(\"%.xf\")` 或 `long double`）。")
     return ""
+
+
+# ---- 大模型解释（判题出错时自动调用，并统计 Token 消耗） ----
+def call_llm(system: str, user: str):
+    """调用 OpenAI 兼容接口，返回 (回复文本, usage 字典)。
+       未配置 LLM_API_KEY 或调用失败时返回 (None, None)，不影响判题。"""
+    if not LLM_API_KEY:
+        return None, None
+    try:
+        resp = requests.post(
+            f"{LLM_BASE_URL}/chat/completions",
+            headers={"Authorization": f"Bearer {LLM_API_KEY}",
+                     "Content-Type": "application/json"},
+            json={"model": LLM_MODEL, "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user}],
+                "temperature": 0.3, "max_tokens": 400},
+            timeout=LLM_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        usage = data.get("usage", {}) or {}
+        text = data["choices"][0]["message"]["content"]
+        return text.strip(), {
+            "prompt_tokens": int(usage.get("prompt_tokens", 0)),
+            "completion_tokens": int(usage.get("completion_tokens", 0)),
+            "total_tokens": int(usage.get("total_tokens", 0)),
+        }
+    except Exception:
+        return None, None
+
+
+def ai_explain_error(status: str, stderr: str, base_hint: str):
+    """判题出错时生成更友好的中文解释，并把 Token 计入数据库。
+       无 Key / 失败则回退到规则版 hint（返回 None）。"""
+    system = ("你是 C++ 编程竞赛的辅导老师，用简洁中文帮初学者定位错误。"
+              "结合编译器/运行器的报错与现有提示，给出最可能的原因和一条"
+              "可操作的修改建议。不要写完整代码，不超过 4 句话。")
+    user = (f"判题状态：{status}\n"
+            f"运行器/编译器报错：\n{(stderr or '')[:1500]}\n"
+            f"现有提示：{base_hint}\n"
+            f"请给出中文解释与修改建议。")
+    text, usage = call_llm(system, user)
+    if text and usage:
+        add_token_usage(usage.get("prompt_tokens", 0),
+                        usage.get("completion_tokens", 0))
+    return text
+
 
 
 def descendants(pid: int):
@@ -406,7 +475,13 @@ def api_run(req: RunReq, request: Request,
         raise HTTPException(status_code=401, detail="密码错误")
     if is_banned(x_device_id, get_client_ip(request)):
         raise HTTPException(status_code=403, detail="该设备已被禁用，请联系管理员")
-    return judge_once(req.code, req.stdin)
+    r = judge_once(req.code, req.stdin)
+    if r.get("status") not in ("AC", None):
+        ai = ai_explain_error(r.get("status", ""), r.get("stderr", ""),
+                               r.get("hint", ""))
+        if ai:
+            r["ai_hint"] = ai
+    return r
 
 
 @app.post("/api/judge")
@@ -419,6 +494,15 @@ def api_judge(req: JudgeReq, request: Request,
     cases = [{"input": c.input, "expected": c.expected} for c in req.cases]
     results = judge_many(req.code, cases)
     passed = sum(1 for r in results if r.get("passed"))
+    # 出错时自动用 LLM 生成一次中文解释（取首个出错用例），Token 计入统计
+    first_err = next((r for r in results
+                      if r.get("status") not in ("AC", None)), None)
+    if first_err:
+        ai = ai_explain_error(first_err.get("status", ""),
+                              first_err.get("stderr", ""),
+                              first_err.get("hint", ""))
+        if ai:
+            first_err["ai_hint"] = ai
     return {"results": results, "summary": {"total": len(results), "passed": passed}}
 
 
@@ -457,9 +541,46 @@ def init_db():
             status TEXT,
             ip TEXT
         );
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        );
         """)
         c.commit()
         c.close()
+
+
+def get_meta(key, default="0"):
+    with _db_lock:
+        c = _conn()
+        row = c.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        c.close()
+    return row[0] if row else default
+
+
+def set_meta(key, value):
+    with _db_lock:
+        c = _conn()
+        c.execute("INSERT INTO meta(key,value) VALUES(?,?) "
+                  "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                  (key, str(value)))
+        c.commit()
+        c.close()
+
+
+def add_token_usage(prompt_tokens: int, completion_tokens: int):
+    """累计 LLM Token 消耗（总消耗 + 当日消耗，持久化到 meta 表）。"""
+    total = prompt_tokens + completion_tokens
+    if total <= 0:
+        return
+    today = _now()[:10]
+    new_total = int(get_meta("token_total", "0")) + total
+    set_meta("token_total", new_total)
+    if get_meta("token_today_date", "") != today:
+        set_meta("token_today_date", today)
+        set_meta("token_today", 0)
+    new_today = int(get_meta("token_today", "0")) + total
+    set_meta("token_today", new_today)
 
 
 def _now():
@@ -647,55 +768,127 @@ def get_top_procs(n=6):
 
 
 def clean_memory():
-    """清理内存：Python GC + 删除残留编译临时目录 + 尝试释放 page cache。
-       返回清理前后的占用对比。"""
+    """针对性清理：删除残留编译目录、回收过期日志、压实数据库空闲空间。
+       只动「本服务留下的、可安全删除的」残留物，不做无意义的全局 drop_caches。
+       返回每项清理的具体内容、释放大小与前后占用对比。"""
     import gc
     import glob
+
+    def du_mb(path):
+        try:
+            total = 0
+            for root, _, files in os.walk(path):
+                for f in files:
+                    try:
+                        total += os.path.getsize(os.path.join(root, f))
+                    except Exception:
+                        pass
+            return total / (1024 * 1024)
+        except Exception:
+            return 0.0
+
     before = get_memory()
-    gc.collect()
-    # 删除残留的编译临时目录（judge_*）
+    items = []          # 被清理的具体项（针对性，前端逐条展示）
+    freed_mb = 0.0
+
+    # 1) 残留编译临时目录：judge_*，超过 10 分钟视为残留，
+    #    避免误删正在评测中的任务目录。
     tmp = tempfile.gettempdir()
+    now = time.time()
     for d in glob.glob(os.path.join(tmp, "judge_*")):
+        try:
+            age = now - os.path.getmtime(d)
+        except Exception:
+            age = 1e9
+        if age < 600:
+            continue
+        size = du_mb(d)
         shutil.rmtree(d, ignore_errors=True)
-    # 尝试释放 page cache / dentries / inodes（需权限，失败忽略）
+        if not os.path.exists(d):
+            items.append({"name": os.path.basename(d), "freed_mb": round(size, 1)})
+            freed_mb += size
+
+    # 2) 过期日志（保留最近 30 天），并 VACUUM 回收被删除行占用的数据库空间。
+    old_logs = 0
     try:
-        subprocess.run("sync; echo 3 > /proc/sys/vm/drop_caches", shell=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with _db_lock:
+            c = _conn()
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).strftime(
+                "%Y-%m-%d")
+            old_logs = c.execute(
+                "SELECT COUNT(*) FROM logs WHERE ts < ?", (cutoff,)).fetchone()[0]
+            if old_logs:
+                c.execute("DELETE FROM logs WHERE ts < ?", (cutoff,))
+                try:
+                    c.execute("VACUUM")
+                except Exception:
+                    c.commit()
+                else:
+                    c.commit()
+            c.close()
     except Exception:
         pass
+    if old_logs:
+        items.append({"name": "过期日志(>30天)", "count": old_logs, "freed_mb": 0.0})
+
+    # 3) Python 垃圾回收：释放进程内未引用对象（含循环引用）。
+    #    注意：gc 不会把 RSS 还给系统，但能清理悬挂引用，配合上面删文件才有效。
     gc.collect()
+
     after = get_memory()
-    return {"before": before, "after": after}
+    return {
+        "before": before,
+        "after": after,
+        "freed_mb": round(freed_mb, 1),
+        "items": items,
+        "tmp_dirs_removed": sum(1 for i in items if i["name"].startswith("judge_")),
+        "logs_removed": old_logs,
+    }
 
 
 def get_stats():
     mem = get_memory()
+    today = _now()[:10]
     with _db_lock:
         c = _conn()
         total = c.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
         banned = c.execute(
             "SELECT COUNT(*) FROM devices WHERE banned=1").fetchone()[0]
-        today = _now()[:10]
         logins_today = c.execute(
             "SELECT COUNT(*) FROM logs WHERE action='login' AND ts LIKE ?",
             (today + "%",)).fetchone()[0]
         total_logins = c.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
         c.close()
+    # Token 消耗：总消耗 + 当日消耗（跨天自动归零当日计数）
+    tok_today = int(get_meta("token_today", "0")) \
+        if get_meta("token_today_date", "") == today else 0
+    tok_total = int(get_meta("token_total", "0"))
     return {"memory": mem, "top": get_top_procs(), "devices": total, "banned": banned,
-            "logins_today": logins_today, "total_logins": total_logins}
+            "logins_today": logins_today, "total_logins": total_logins,
+            "token_total": tok_total, "token_today": tok_today}
 
 
-_admin_tokens = {}
+_admin_tokens = {}   # token -> (过期时间戳, 角色: 'admin' | 'tour')
 _admin_lock = threading.Lock()
 
 
-def require_admin(x_admin_token: str = Header(None)):
+def require_admin(x_admin_token: str = Header(None)) -> str:
+    """校验管理员令牌，返回角色 'admin' 或 'tour'；无效/过期则 401。"""
     if not x_admin_token:
         raise HTTPException(status_code=401, detail="管理员未登录")
     with _admin_lock:
-        exp = _admin_tokens.get(x_admin_token)
-    if not exp or exp < time.time():
+        item = _admin_tokens.get(x_admin_token)
+    if not item or item[0] < time.time():
         raise HTTPException(status_code=401, detail="管理员未登录或已过期")
+    return item[1]
+
+
+def require_admin_write(x_admin_token: str = Header(None)):
+    """写操作专用：必须是 admin 角色；参观(tour)模式返回 403。"""
+    role = require_admin(x_admin_token)
+    if role != "admin":
+        raise HTTPException(status_code=403,
+                            detail="参观模式仅可查看，不能进行任何操作")
 
 
 # ---- 请求模型 ----
@@ -741,25 +934,39 @@ def api_register(req: DeviceRegisterReq, request: Request,
     return {"ok": True}
 
 
+def check_admin_password(pw: str) -> bool:
+    """以恒定时间比较提交密码的哈希与管理员哈希，避免时序攻击。"""
+    cand = hashlib.pbkdf2_hmac("sha256", pw.strip().encode("utf-8"), _ADMIN_SALT, 150000)
+    return hmac.compare_digest(cand, ADMIN_PASSWORD_HASH)
+
+
 @app.post("/admin/login")
 def admin_login(req: AdminLogin):
-    if req.password.strip() != ADMIN_PASSWORD.strip():
-        raise HTTPException(status_code=401, detail="管理员密码错误")
+    # 先试管理员密码（哈希校验），再试参观密码（明文恒定时间比较）
+    if check_admin_password(req.password):
+        role = "admin"
+    elif hmac.compare_digest(req.password.strip().encode("utf-8"),
+                              TOUR_PASSWORD.strip().encode("utf-8")):
+        role = "tour"
+    else:
+        raise HTTPException(status_code=401, detail="密码错误")
     token = uuid.uuid4().hex
     with _admin_lock:
-        _admin_tokens[token] = time.time() + 3600 * 12
-    return {"token": token}
+        _admin_tokens[token] = (time.time() + 3600 * 12, role)
+    return {"token": token, "role": role}
 
 
 @app.get("/api/admin/stats")
 def admin_stats(x_admin_token: str = Header(None)):
-    require_admin(x_admin_token)
-    return get_stats()
+    role = require_admin(x_admin_token)
+    d = get_stats()
+    d["role"] = role
+    return d
 
 
 @app.post("/api/admin/memory/clean")
 def admin_clean_mem(x_admin_token: str = Header(None)):
-    require_admin(x_admin_token)
+    require_admin_write(x_admin_token)
     return clean_memory()
 
 
@@ -771,21 +978,21 @@ def admin_devices(x_admin_token: str = Header(None)):
 
 @app.post("/api/admin/device/ban")
 def admin_ban(req: DeviceBan, x_admin_token: str = Header(None)):
-    require_admin(x_admin_token)
+    require_admin_write(x_admin_token)
     set_ban(req.device_id, req.banned)
     return {"ok": True}
 
 
 @app.post("/api/admin/device/delete")
 def admin_del_device(req: DeviceDelete, x_admin_token: str = Header(None)):
-    require_admin(x_admin_token)
+    require_admin_write(x_admin_token)
     delete_device(req.device_id)
     return {"ok": True}
 
 
 @app.post("/api/admin/log/delete")
 def admin_del_log(req: LogDelete, x_admin_token: str = Header(None)):
-    require_admin(x_admin_token)
+    require_admin_write(x_admin_token)
     delete_log(req.log_id)
     return {"ok": True}
 

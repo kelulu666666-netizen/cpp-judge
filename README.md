@@ -55,7 +55,9 @@ bash run.sh
 #    管理后台： http://localhost:8000/admin
 ```
 
-打开主站输入访问密码 `102938`；后台登录密码 `admin888`。
+打开主站输入访问密码 `102938`；后台登录密码请使用部署时配置的管理员密码（已加密保存，详见下方环境变量说明，不在文档中明文列出）。
+
+> 🔓 **参观模式**：用参观密码 `666` 登录后台，可查看所有统计与记录，但**禁用 / 删除设备 / 删除日志 / 清理内存**等写操作均被禁用（接口返回 403，按钮置灰）。适合演示或只读巡查。可通过 `TOUR_PASSWORD` 修改。
 
 ---
 
@@ -64,15 +66,24 @@ bash run.sh
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `JUDGE_PASSWORD` | `102938` | 访问密码（主站 + 接口凭证） |
-| `ADMIN_PASSWORD` | `admin888` | 管理后台登录密码 |
+| `ADMIN_PASSWORD` | *部署时设置* | 管理后台登录密码（内存中以「随机盐 + pbkdf2_hmac(sha256, 15 万次)」哈希保存，明文读取后立即丢弃，**不对外公开**；请在部署时通过环境变量自行设定强密码） |
 | `JUDGE_DB` | `./judge.db` | 设备/登录记录数据库路径（SQLite） |
 | `PORT` | — | 若设置则监听该端口（部署脚本注入） |
+| `LLM_API_KEY` | 空 | 大模型 API Key；**配置后**判题出错会自动调用 LLM 生成中文解释并统计 Token 消耗 |
+| `LLM_BASE_URL` | `https://api.deepseek.com` | 大模型接口地址（OpenAI 兼容 `/chat/completions`） |
+| `LLM_MODEL` | `deepseek-chat` | 模型名 |
+| `LLM_TIMEOUT` | `15` | 单次 LLM 调用超时（秒） |
+| `TOUR_PASSWORD` | `666` | 参观密码：登录后**仅可查看**后台（统计 / 设备 / 日志 / 内存），不能进行禁用 / 删除 / 清理等任何写操作 |
 
 示例：
 
 ```bash
-JUDGE_PASSWORD=你的密码 ADMIN_PASSWORD=你的后台密码 uvicorn app:app --host 0.0.0.0 --port 8000
+JUDGE_PASSWORD=你的密码 ADMIN_PASSWORD=你的后台密码 \
+LLM_API_KEY=sk-xxxx LLM_BASE_URL=https://api.deepseek.com LLM_MODEL=deepseek-chat \
+uvicorn app:app --host 0.0.0.0 --port 8000
 ```
+
+> 🤖 **Token 消耗统计**：配置 `LLM_API_KEY` 后，每次判题出现编译错误 / 运行错误 / 超时 / 内存超限 / 答案错误时，会自动调用大模型生成中文解释，并把消耗的 Token（prompt + completion）累计到数据库。管理后台「🤖 Token 消耗值」卡片展示**累计消耗**与**今日消耗**。未配置 Key 时不调用、不计数。
 
 ---
 

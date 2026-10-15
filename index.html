@@ -58,6 +58,7 @@ pre{
   border:1px solid rgba(79,140,255,.45); border-radius:8px; padding:10px; margin-top:10px;
   font-size:13px; line-height:1.65; color:#cfe0ff;
 }
+.hint.ai{background:rgba(168,85,247,.12); border-color:rgba(168,85,247,.5); color:#e6d2ff;}
 .case{border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:10px; background:#121726;}
 .case .hd{display:flex; justify-content:space-between; align-items:center; color:var(--mut); font-size:12px; margin-bottom:6px;}
 .case .del{color:var(--bad); border:0; background:none; font-size:13px; padding:4px;}
@@ -86,7 +87,16 @@ pre{
 .editor > textarea::-webkit-scrollbar{display:none;}
 .editor > textarea::placeholder{color:#6b7280;}
 .editor .ln{min-height:1.5em;}
-.editor .ln.err{background:rgba(231,76,60,.32); color:#ffb1a8; border-radius:3px;}
+.editor .ln.err{background:rgba(231,76,60,.32); border-radius:3px;}
+.editor .ln.err *{color:#ffb1a8 !important;}
+/* C++ 语法高亮配色（One Dark 风格） */
+.tok-com{color:#7f848e; font-style:italic;}
+.tok-str{color:#98c379;}
+.tok-num{color:#d19a66;}
+.tok-kw{color:#c678dd;}
+.tok-type{color:#56b6c2;}
+.tok-pre{color:#e5c07b;}
+.tok-fn{color:#61afef;}
 
 /* 密码门 */
 #gate{
@@ -136,7 +146,7 @@ pre{
   <select id="sample">
     <option value="">— 选择示例快速体验 —</option>
   </select>
-  <label>源代码（C++，<span style="color:var(--bad)">红色高亮</span>为出错行）</label>
+  <label>源代码（C++）：<span style="color:var(--bad)">红色行</span>为出错行，其余彩色为语法高亮</label>
   <div class="editor">
     <pre id="codeHL" aria-hidden="true"></pre>
     <textarea id="code" spellcheck="false"></textarea>
@@ -149,7 +159,7 @@ pre{
 
 <!-- 测试用例面板 -->
 <div class="wrap" id="pane-test" style="display:none">
-  <label>源代码（C++，<span style="color:var(--bad)">红色高亮</span>为出错行）</label>
+  <label>源代码（C++）：<span style="color:var(--bad)">红色行</span>为出错行，其余彩色为语法高亮</label>
   <div class="editor">
     <pre id="code2HL" aria-hidden="true"></pre>
     <textarea id="code2" spellcheck="false"></textarea>
@@ -210,15 +220,71 @@ const SAMPLES = {
 
 function escapeHtml(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 
-// ---- 代码高亮层 ----
+// ---- 代码高亮层（C++ 语法着色） ----
+const CPP_KW = new Set(('auto bool break case catch char class const const_cast continue default delete do double dynamic_cast else enum explicit export extern float for friend goto if inline int long mutable namespace new noexcept nullptr operator private protected public register reinterpret_cast return short signed sizeof static static_cast struct switch template this throw try typedef typeid typename union unsigned using virtual void volatile wchar_t while asm typeof true false').split(/\s+/));
+const CPP_TYPE = new Set(('string vector map set pair queue stack deque list array bitset cin cout cerr clog endl stringstream istringstream ostringstream fixed setprecision make_pair size_t int8_t int16_t int32_t int64_t uint8_t uint16_t uint32_t uint64_t').split(/\s+/));
+// 单行着色；inBlock=是否处于跨行块注释中
+function hlLine(line, inBlock){
+  let out='', i=0; const n=line.length;
+  if(inBlock){
+    const end=line.indexOf('*/');
+    if(end===-1) return {html:`<span class="tok-com">${escapeHtml(line)}</span>`, inBlock:true};
+    out+=`<span class="tok-com">${escapeHtml(line.slice(0,end+2))}</span>`;
+    i=end+2; inBlock=false;
+  }
+  while(i<n){
+    const c=line[i];
+    if(c==='/'&&line[i+1]==='/'){ out+=`<span class="tok-com">${escapeHtml(line.slice(i))}</span>`; break; }
+    if(c==='/'&&line[i+1]==='*'){
+      const end=line.indexOf('*/',i+2);
+      if(end===-1){ out+=`<span class="tok-com">${escapeHtml(line.slice(i))}</span>`; i=n; inBlock=true; break; }
+      out+=`<span class="tok-com">${escapeHtml(line.slice(i,end+2))}</span>`; i=end+2; continue;
+    }
+    if(c==='"'||c==="'"){
+      let j=i+1;
+      while(j<n){ if(line[j]==='\\'){ j+=2; continue; } if(line[j]===c){ j++; break; } j++; }
+      out+=`<span class="tok-str">${escapeHtml(line.slice(i,Math.min(j,n)))}</span>`; i=j; continue;
+    }
+    if(c==='#'&&/^\s*$/.test(line.slice(0,i))){
+      out+=`<span class="tok-pre">#</span>`; i++;
+      while(i<n&&(line[i]===' '||line[i]==='\t')){ out+=escapeHtml(line[i]); i++; }
+      let j=i; while(j<n&&/[A-Za-z]/.test(line[j])) j++;
+      if(j>i){ out+=`<span class="tok-pre">${escapeHtml(line.slice(i,j))}</span>`; i=j; }
+      continue;
+    }
+    if(/[0-9]/.test(c)||(c==='.'&&/[0-9]/.test(line[i+1]||''))){
+      let j=i+1;
+      while(j<n&&/[0-9a-fA-FxXbBoO_.eE]/.test(line[j])) j++;
+      out+=`<span class="tok-num">${escapeHtml(line.slice(i,j))}</span>`; i=j; continue;
+    }
+    if(/[A-Za-z_]/.test(c)){
+      let j=i+1;
+      while(j<n&&/[A-Za-z0-9_]/.test(line[j])) j++;
+      const word=line.slice(i,j);
+      let k=j; while(k<n&&(line[k]===' '||line[k]==='\t')) k++;
+      let cls='';
+      if(CPP_KW.has(word)) cls='tok-kw';
+      else if(CPP_TYPE.has(word)) cls='tok-type';
+      else if(/^[A-Z][A-Z0-9_]*$/.test(word)&&word.length>1) cls='tok-pre';
+      else if(k<n&&line[k]==='(') cls='tok-fn';
+      out+= cls ? `<span class="${cls}">${escapeHtml(word)}</span>` : escapeHtml(word);
+      i=j; continue;
+    }
+    out+=escapeHtml(c); i++;
+  }
+  return {html:out, inBlock};
+}
 function renderHL(textareaId, preId, errSet){
   const ta = document.getElementById(textareaId);
   const pre = document.getElementById(preId);
   const lines = ta.value.split('\n');
-  pre.innerHTML = lines.map((ln,i)=>{
+  let html='', inBlock=false;
+  for(let i=0;i<lines.length;i++){
+    const r = hlLine(lines[i], inBlock); inBlock = r.inBlock;
     const cls = errSet.has(i+1) ? 'ln err' : 'ln';
-    return `<div class="${cls}">${escapeHtml(ln)}</div>`;
-  }).join('');
+    html += `<div class="${cls}">${r.html||''}</div>`;
+  }
+  pre.innerHTML = html;
   pre.scrollTop = ta.scrollTop;
 }
 function wireEditor(textareaId, preId, errSet){
@@ -273,6 +339,7 @@ $('#addCase').onclick = () => addCase();
 
 function fmtMem(m){return m==null?'—':(m<1?Math.round(m*1024)+' KB':m.toFixed(1)+' MB');}
 function hintBox(h){ return h ? `<div class="hint">💡 ${escapeHtml(h)}</div>` : ''; }
+function aiHintBox(h){ return h ? `<div class="hint ai">🤖 ${escapeHtml(h)}</div>` : ''; }
 
 function fmtRes(r){
   const st = r.status;
@@ -285,6 +352,7 @@ function fmtRes(r){
     html += `<div class="meta">期望输出：</div><pre>${escapeHtml(r.expected||'')}</pre>`;
   }
   html += hintBox(r.hint);
+  html += aiHintBox(r.ai_hint);
   return html;
 }
 
@@ -339,6 +407,7 @@ $('#judgeBtn').onclick = async () => {
       if (res.stderr) html += `<pre>${escapeHtml(res.stderr)}</pre>`;
       if (res.status==='WA') html += `<div class="meta">期望：</div><pre>${escapeHtml(res.expected||'')}</pre>`;
       html += hintBox(res.hint);
+      html += aiHintBox(res.ai_hint);
       html += `</div>`;
     });
     $('#judgeResult').innerHTML = html;

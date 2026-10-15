@@ -46,6 +46,11 @@ th{color:var(--mut); font-weight:600;}
 .loginbox input{width:100%; background:#0c0f1a; color:var(--txt); border:1px solid var(--line);
   border-radius:10px; padding:13px; font-size:18px; text-align:center; margin-bottom:12px;}
 .err{color:var(--bad); font-size:13px; min-height:16px; margin-bottom:8px; text-align:center;}
+.cleanlist{margin:2px 0 2px 18px; font-size:13px; color:var(--fg);}
+.cleanlist li{margin:2px 0; list-style:disc;}
+.banner{margin:10px 0; padding:10px 12px; border-radius:10px; font-size:13px; line-height:1.5;}
+.banner.tour{background:rgba(255,179,71,.14); border:1px solid rgba(255,179,71,.5); color:#ffd9a0;}
+.btn:disabled{opacity:.45; cursor:not-allowed;}
 .empty{color:var(--mut); text-align:center; padding:16px 0; font-size:13px;}
 .hidden{display:none !important;}
 .copyright{text-align:center; color:var(--mut); font-size:12px; padding:16px;
@@ -64,8 +69,8 @@ th{color:var(--mut); font-weight:600;}
     <div id="netErr" class="err hidden"></div>
     <button class="btn" id="loginBtn">登录</button>
   </div>
-  <div class="small" style="color:var(--mut); text-align:center; margin-top:10px; font-size:12px;">
-    默认密码 admin888（可用环境变量 ADMIN_PASSWORD 修改）
+  <div class="small" style="color:var(--mut); text-align:center; margin-top:12px; font-size:12px;">
+    🔓 参观密码 <b style="color:var(--txt);">666</b>：可查看后台，但不能操作
   </div>
 </div>
 
@@ -78,6 +83,8 @@ th{color:var(--mut); font-weight:600;}
       <button class="btn sm danger" id="logoutBtn">登出</button>
     </div>
   </header>
+
+  <div id="tourBanner" class="banner tour hidden">🔓 参观模式：仅可查看，禁用 / 删除 / 清理等均不可用</div>
 
   <div class="wrap">
     <div class="card">
@@ -108,6 +115,17 @@ th{color:var(--mut); font-weight:600;}
     </div>
 
     <div class="card">
+      <h2>🤖 Token 消耗值</h2>
+      <div class="stats">
+        <div class="stat"><div class="num" id="stTokTotal">0</div><div class="lbl">累计消耗</div></div>
+        <div class="stat"><div class="num" id="stTokToday">0</div><div class="lbl">今日消耗</div></div>
+      </div>
+      <div class="small" style="color:var(--mut); margin-top:6px;">
+        判题出错时由大模型生成中文解释所消耗的 Token（prompt+completion），未配置 LLM_API_KEY 时不计数。
+      </div>
+    </div>
+
+    <div class="card">
       <h2>📱 设备列表（点击可禁用 / 删除）</h2>
       <div id="devBody"></div>
     </div>
@@ -123,6 +141,7 @@ th{color:var(--mut); font-weight:600;}
 const $ = s => document.querySelector(s);
 let TOKEN = '';
 try { TOKEN = localStorage.getItem('admin_token') || ''; } catch(e) { TOKEN = ''; }
+let ROLE = '';   // 'admin' 或 'tour'（参观模式）
 
 // 请求基址：优先当前域名；若页面被嵌在内置浏览器/预览中导致请求失败，自动回退到部署域名
 const DEPLOY_ORIGIN = 'https://a406b3603a6c33bb1.app.workbuddy.host';
@@ -178,20 +197,39 @@ $('#loginBtn').onclick = async () => {
     }
     const d = await r.json();
     TOKEN = d.token; try{ localStorage.setItem('admin_token', TOKEN); }catch(e){}
+    ROLE = d.role || '';
     $('#apwErr').textContent=''; showDash(); load();
   }catch(e){ $('#apwErr').textContent='网络错误，请重试（建议用 Safari 打开本页）'; }
 };
 $('#apw').addEventListener('keydown', e=>{ if(e.key==='Enter') $('#loginBtn').click(); });
 $('#logoutBtn').onclick = () => { TOKEN=''; try{ localStorage.removeItem('admin_token'); }catch(e){} showLogin(); };
 $('#refreshBtn').onclick = load;
+function applyRole(){
+  const tour = (ROLE === 'tour');
+  $('#tourBanner').classList.toggle('hidden', !tour);
+  $('#cleanBtn').disabled = tour;          // 参观模式禁用清理
+  $('#cleanBtn').title = tour ? '参观模式不能操作' : '';
+}
 $('#cleanBtn').onclick = async () => {
+  if (ROLE === 'tour'){ alert('参观模式仅可查看，不能进行清理操作'); return; }
   const btn = $('#cleanBtn'); btn.disabled = true; btn.textContent = '清理中…';
   $('#cleanMsg').classList.add('hidden');
   try{
     const d = await api('/api/admin/memory/clean', 'POST');
     const b = d.before, a = d.after;
     const freed = Math.max(b.used_mb - a.used_mb, 0);
-    $('#cleanMsg').textContent = `✅ 已清理：占用 ${b.used_mb}MB → ${a.used_mb}MB（释放约 ${freed}MB）`;
+    let html = `<div style="margin-bottom:4px;">✅ 已清理：占用 ${b.used_mb}MB → ${a.used_mb}MB（释放约 ${freed}MB）</div>`;
+    if(d.items && d.items.length){
+      html += '<div style="font-size:12px;color:var(--mut);margin:4px 0 2px;">针对性清理清单：</div><ul class="cleanlist">';
+      for(const it of d.items){
+        const sz = it.freed_mb ? `（释放 ${it.freed_mb}MB）` : (it.count!=null ? `（${it.count} 条）` : '');
+        html += `<li>${esc(it.name)}${sz}</li>`;
+      }
+      html += '</ul>';
+    }else{
+      html += '<div style="font-size:12px;color:var(--mut);">当前无残留编译目录与过期日志，无需清理。</div>';
+    }
+    $('#cleanMsg').innerHTML = html;
     $('#cleanMsg').classList.remove('hidden');
     load();
   }catch(e){ $('#cleanMsg').textContent = '清理失败，请重试'; $('#cleanMsg').classList.remove('hidden'); }
@@ -214,6 +252,8 @@ async function load(){
   try{
     const s = await api('/api/admin/stats');
     showDash(); // 请求成功才显示主界面
+    ROLE = s.role || ROLE;        // 刷新时同步角色
+    applyRole();                  // 按角色切换 UI（参观模式禁用操作）
     const m = s.memory;
     $('#memFill').style.width = m.percent + '%';
     $('#memUsed').textContent = `已用 ${fmtMB(m.used_mb)}`;
@@ -226,6 +266,8 @@ async function load(){
     $('#stBanned').textContent = s.banned;
     $('#stToday').textContent = s.logins_today;
     $('#stLogins').textContent = s.total_logins;
+    $('#stTokTotal').textContent = s.token_total != null ? s.token_total : 0;
+    $('#stTokToday').textContent = s.token_today != null ? s.token_today : 0;
 
     const d = await api('/api/admin/devices');
     renderDevices(d.devices);
@@ -250,18 +292,20 @@ function renderDevices(devices){
       <td>${esc((dv.last_seen||'').replace('T',' '))}</td>
       <td><span class="badge b${b}">${b?'已禁用':'正常'}</span></td>
       <td><div class="rowbtn">
-        <button class="btn sm ${b?'ghost':'danger'}" data-ban="${b?0:1}" data-id="${esc(dv.device_id)}">${b?'解禁':'禁用'}</button>
-        <button class="btn sm ghost" data-deldev="1" data-id="${esc(dv.device_id)}">删除</button>
+        <button class="btn sm ${b?'ghost':'danger'}" data-ban="${b?0:1}" data-id="${esc(dv.device_id)}" ${ROLE==='tour'?'disabled':''}>${b?'解禁':'禁用'}</button>
+        <button class="btn sm ghost" data-deldev="1" data-id="${esc(dv.device_id)}" ${ROLE==='tour'?'disabled':''}>删除</button>
       </div></td>
     </tr>`;
   }
   html += '</tbody></table>';
   body.innerHTML = html;
   body.querySelectorAll('[data-ban]').forEach(btn=>btn.onclick=async()=>{
+    if (ROLE === 'tour'){ alert('参观模式仅可查看，不能操作'); return; }
     await api('/api/admin/device/ban','POST',{device_id:btn.dataset.id,banned:btn.dataset.ban==='1'});
     load();
   });
   body.querySelectorAll('[data-deldev]').forEach(btn=>btn.onclick=async()=>{
+    if (ROLE === 'tour'){ alert('参观模式仅可查看，不能操作'); return; }
     if(!confirm('确认删除该设备及它的全部登录记录？')) return;
     await api('/api/admin/device/delete','POST',{device_id:btn.dataset.id});
     load();
@@ -277,12 +321,13 @@ function renderLogs(logs){
       <td class="mono">${esc((lg.ts||'').replace('T',' '))}</td>
       <td class="mono">${esc(shortId(lg.device_id))}</td>
       <td class="mono">${esc(lg.ip||'')}</td>
-      <td><button class="btn sm ghost" data-dellog="1" data-id="${lg.id}">删除</button></td>
+      <td><button class="btn sm ghost" data-dellog="1" data-id="${lg.id}" ${ROLE==='tour'?'disabled':''}>删除</button></td>
     </tr>`;
   }
   html += '</tbody></table>';
   body.innerHTML = html;
   body.querySelectorAll('[data-dellog]').forEach(btn=>btn.onclick=async()=>{
+    if (ROLE === 'tour'){ alert('参观模式仅可查看，不能操作'); return; }
     await api('/api/admin/log/delete','POST',{log_id:Number(btn.dataset.id)});
     load();
   });
